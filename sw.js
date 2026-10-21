@@ -1,6 +1,6 @@
-// Selah service worker: offline app shell + reminder notifications.
-const CACHE = 'selah-v1';
-const SHELL = ['./', 'index.html', 'styles.css?v=1', 'app.js?v=1', 'manifest.webmanifest', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png'];
+// Kairos service worker: offline app shell + reminder notifications.
+const CACHE = 'kairos-v2';
+const SHELL = ['./', 'index.html', 'styles.css?v=2', 'app.js?v=2', 'manifest.webmanifest', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -22,12 +22,12 @@ self.addEventListener('fetch', (e) => {
 
 self.addEventListener('push', (e) => {
   let data = {};
-  try { data = e.data ? e.data.json() : {}; } catch { data = { title: 'Selah', body: e.data && e.data.text() }; }
-  e.waitUntil(self.registration.showNotification(data.title || 'Selah', {
+  try { data = e.data ? e.data.json() : {}; } catch { data = { title: 'Kairos', body: e.data && e.data.text() }; }
+  e.waitUntil(self.registration.showNotification(data.title || 'Kairos', {
     body: data.body || 'Time to check in.',
     icon: 'icons/icon-192.png',
     badge: 'icons/icon-192.png',
-    tag: data.tag || 'selah',
+    tag: data.tag || 'kairos',
     data: { url: data.url || './' },
   }));
 });

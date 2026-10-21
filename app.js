@@ -1,18 +1,18 @@
-/* Selah — daily wellness check-in. Data lives in a private GitHub repo. */
+/* Kairos — daily wellness check-in. Data lives in a private GitHub repo. */
 'use strict';
 
 const CFG = {
   owner: 'joshyzee',
-  repo: 'selah-data',
+  repo: 'kairos-data',
   vapid: 'BEKha_ib7MkqVDToU4LmtHluHk2UC0VjtANN_z9Fs01Rx950_HTZvvM4ADPylDzUiY1f7xtUdVHRAy7a0uM81W8',
   name: 'Josh',
 };
 
 /* ---------- small helpers ---------- */
 const LS = {
-  get(k, d) { try { const v = localStorage.getItem('selah.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
-  set(k, v) { try { localStorage.setItem('selah.' + k, JSON.stringify(v)); } catch {} },
-  del(k) { try { localStorage.removeItem('selah.' + k); } catch {} },
+  get(k, d) { try { const v = localStorage.getItem('kairos.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem('kairos.' + k, JSON.stringify(v)); } catch {} },
+  del(k) { try { localStorage.removeItem('kairos.' + k); } catch {} },
 };
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const pad = (n) => String(n).padStart(2, '0');
@@ -172,6 +172,7 @@ const FACTS = [
   { type: 'fact', text: 'Next-day muscle soreness isn’t caused by lactic acid. It comes from tiny muscle damage and the repair that follows.' },
   { type: 'fact', text: 'Hummingbirds are the only birds that can fly backwards.' },
   { type: 'fact', text: 'Eliud Kipchoge ran a marathon in 1:59:40 in Vienna in 2019 — the first under two hours, in a specially set-up event.' },
+  { type: 'fact', text: 'The Greeks had two words for time: chronos, clock time, and kairos, the right or appointed moment. Mark 1:15 uses kairos: “The time has come.”' },
   { type: 'fact', text: '“Selah” appears 71 times in the Psalms and 3 times in Habakkuk. Many scholars think it marked a pause.' },
   { type: 'fact', text: 'The Johannesburg Stock Exchange was founded in 1887, a year after gold was discovered on the Witwatersrand.' },
   { type: 'fact', text: 'Water expands by about 9% when it freezes, which is why ice floats.' },
@@ -319,8 +320,8 @@ function render() {
 function viewSetup() {
   return `<div class="wrap setup">
     <img src="icons/icon-192.png" alt="">
-    <h1>Selah</h1>
-    <p>Pause. Reflect. Keep going.<br>Paste your GitHub key to unlock this device. It stays on this device only.</p>
+    <h1>Kairos</h1>
+    <p>Make the moment count.<br>Paste your GitHub key to unlock this device. It stays on this device only.</p>
     <input class="field" id="tok" type="password" autocomplete="off" placeholder="github_pat_…">
     <div class="err" id="tok-err"></div>
     <button class="save" data-action="unlock">Unlock</button>
@@ -660,19 +661,19 @@ function viewJournal() {
 function viewSettings() {
   const push = LS.get('push', false);
   return `<div class="top"><div><h1>Settings</h1><div class="sub">Data: github.com/${CFG.owner}/${CFG.repo} (private)</div></div></div>
-  <div class="card"><h3>Reminders</h3><p class="small muted" style="margin-bottom:12px">06:30 and 21:30, plus a nudge if you miss one. On iPhone this works once Selah is on your Home Screen.</p>
+  <div class="card"><h3>Reminders</h3><p class="small muted" style="margin-bottom:12px">06:30 and 21:30, plus a nudge if you miss one. On iPhone this works once Kairos is on your Home Screen.</p>
     <button class="btn full" data-action="push">${push ? 'Reminders on · tap to refresh' : 'Turn on reminders'}</button></div>
   <div class="card"><h3>This device</h3>
     <input class="field" data-action="device" value="${esc(LS.get('device', guessDevice()))}" style="margin-bottom:10px">
     <button class="btn full" data-action="sync" style="margin-bottom:8px">Sync now</button>
     <button class="btn full" data-action="export" style="margin-bottom:8px">Download my data</button>
     <button class="btn full" data-action="lock">Lock this device (removes the key)</button></div>
-  <p class="tiny">Selah · ${S.dirty ? 'unsynced changes on this device' : 'everything synced'}</p>`;
+  <p class="tiny">Kairos · ${S.dirty ? 'unsynced changes on this device' : 'everything synced'}</p>`;
 }
 function guessDevice() { return /iPhone|iPad/.test(navigator.userAgent) ? 'iphone' : 'laptop'; }
 function urlB64(s) { const p = '='.repeat((4 - (s.length % 4)) % 4); const b = atob((s + p).replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from([...b].map((c) => c.charCodeAt(0))); }
 async function enablePush() {
-  if (!('serviceWorker' in navigator) || !('PushManager' in window)) { toast('Add Selah to your Home Screen first, then open it from there.'); return; }
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) { toast('Add Kairos to your Home Screen first, then open it from there.'); return; }
   const perm = await Notification.requestPermission();
   if (perm !== 'granted') { toast('Notifications are blocked. Allow them in Settings.'); return; }
   const reg = await navigator.serviceWorker.ready;
@@ -725,7 +726,7 @@ document.addEventListener('click', async (ev) => {
   else if (a === 'sync') { toast('Syncing…'); try { await loadAll(); render(); toast('Up to date'); } catch { toast('Couldn’t reach GitHub'); } }
   else if (a === 'export') {
     const blob = new Blob([JSON.stringify(S.data, null, 1)], { type: 'application/json' });
-    const u = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = u; link.download = `selah-${today()}.json`; link.click(); setTimeout(() => URL.revokeObjectURL(u), 2000);
+    const u = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = u; link.download = `kairos-${today()}.json`; link.click(); setTimeout(() => URL.revokeObjectURL(u), 2000);
   } else if (a === 'lock') {
     if (confirm('Remove the key from this device? Your data stays safe on GitHub.')) { LS.del('token'); LS.del('data'); LS.del('sha'); S.token = null; render(); }
   }
@@ -751,7 +752,7 @@ async function unlock() {
   S.token = tok;
   try {
     const r = await fetch(`https://api.github.com/repos/${CFG.owner}/${CFG.repo}`, { headers: { Authorization: `Bearer ${tok}` } });
-    if (!r.ok) throw new Error(r.status === 401 ? 'That key wasn’t accepted.' : r.status === 404 ? 'That key can’t see the selah-data repo.' : 'GitHub said ' + r.status);
+    if (!r.ok) throw new Error(r.status === 401 ? 'That key wasn’t accepted.' : r.status === 404 ? 'That key can’t see the kairos-data repo.' : 'GitHub said ' + r.status);
     LS.set('token', tok);
     render(); toast('Unlocked'); await loadAll(); render();
   } catch (e) { S.token = null; err.textContent = e.message; }

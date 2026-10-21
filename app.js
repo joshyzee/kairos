@@ -29,6 +29,30 @@ const b64enc = (s) => btoa(unescape(encodeURIComponent(s)));
 const b64dec = (s) => decodeURIComponent(escape(atob(s.replace(/\n/g, ''))));
 const weekKey = (s) => addDays(s, (7 - dow(s)) % 7); // the Sunday that ends this week
 
+// Apple Health values arrive from the Shortcut as numbers or text ("1 hr 15 min", "1:15:00", "8 432", "512 kcal").
+function toMinutes(v) {
+  if (v == null || v === '') return null;
+  if (typeof v === 'number') return v;
+  const s = String(v).trim().toLowerCase();
+  if (s.includes(':')) { const p = s.split(':').map(Number); return p.length === 3 ? p[0] * 60 + p[1] + p[2] / 60 : p[0] + p[1] / 60; }
+  const h = s.match(/([\d.,]+)\s*(h|hr|hour)/), m = s.match(/([\d.,]+)\s*(m|min)/), sec = s.match(/([\d.,]+)\s*(s|sec)/);
+  if (h || m || sec) return (h ? parseFloat(h[1].replace(',', '.')) * 60 : 0) + (m ? parseFloat(m[1].replace(',', '.')) : 0) + (sec ? parseFloat(sec[1].replace(',', '.')) / 60 : 0);
+  const n = parseFloat(s.replace(',', '.'));
+  return isNaN(n) ? null : n;
+}
+function toNumber(v) {
+  if (v == null || v === '') return null;
+  if (typeof v === 'number') return v;
+  const n = parseFloat(String(v).replace(/[\s ]/g, '').replace(',', '.'));
+  return isNaN(n) ? null : n;
+}
+function healthFor(d) {
+  const h = S.health[d];
+  if (!h) return null;
+  const mins = toMinutes(h.workoutMinutes);
+  return { minutes: mins ? Math.round(mins) : null, type: h.workoutType || null, kcal: toNumber(h.activeKcal), steps: toNumber(h.steps) };
+}
+
 /* ---------- state ---------- */
 const EMPTY = () => ({ days: {}, weeks: {} });
 const S = {
@@ -424,9 +448,9 @@ function openForm(type, date) {
     const carry = type === 'morning' ? ['sleepHours', 'sleepQuality'] : ['mood', 'energy', 'stress', 'anxiety', 'busy'];
     if (prev) for (const k of carry) if (prev[k] != null) { values[k] = prev[k]; pre.add(k); }
     if (type === 'morning' && values.sleepHours == null) values.sleepHours = 7;
-    const h = S.health[date];
-    if (type === 'evening' && h && h.workoutMinutes) {
-      values.training = { type: null, minutes: Math.round(h.workoutMinutes), rpe: null, fromHealth: true };
+    const h = healthFor(date);
+    if (type === 'evening' && h && h.minutes) {
+      values.training = { type: null, minutes: h.minutes, rpe: null, fromHealth: true };
     }
   }
   if (type === 'evening') values.training = values.training || {};
@@ -459,8 +483,11 @@ function viewForm() {
     html += q('Where your energy went', choice('roles', ['Faith', 'Kora', 'UPCS', 'Studies', 'Athletics', 'Relationship', 'Family', 'Rest'], true));
     html += `<div class="section-title">Training</div>`;
     const tr = v.training;
-    const h = S.health[f.date];
-    if (h && h.workoutMinutes) html += `<div class="ctx">From Technogym / Apple Health: ${Math.round(h.workoutMinutes)} min${h.workoutType ? ` · ${esc(h.workoutType)}` : ''}${h.activeKcal ? ` · ${Math.round(h.activeKcal)} kcal` : ''}</div>`;
+    const h = healthFor(f.date);
+    if (h && (h.minutes || h.kcal || h.steps)) {
+      const bits = [h.minutes ? `${h.minutes} min workout` : null, h.type ? esc(h.type) : null, h.kcal ? `${Math.round(h.kcal)} kcal active` : null, h.steps ? `${Math.round(h.steps).toLocaleString('en-ZA')} steps` : null].filter(Boolean);
+      html += `<div class="ctx">From Apple Health: ${bits.join(' · ')}</div>`;
+    }
     html += q('Session', `<div class="chips" data-group="training.type">${['Rest', 'Speed', 'Speed endurance', 'Tempo', 'Gym', 'Technogym cardio', 'Recovery', 'Other'].map((o) => `<button data-action="train" data-key="type" data-value="${o}" class="${tr.type === o ? 'on' : ''}">${o}</button>`).join('')}</div>`);
     if (tr.type && tr.type !== 'Rest') {
       html += q('Minutes', `<div class="chips">${[30, 45, 60, 75, 90, 120].map((m) => `<button data-action="train" data-key="minutes" data-value="${m}" class="${tr.minutes === m ? 'on' : ''}">${m}</button>`).join('')}<input class="field" style="width:90px;padding:9px 12px" inputmode="numeric" placeholder="Other" data-action="trainmin" value="${tr.minutes && ![30, 45, 60, 75, 90, 120].includes(tr.minutes) ? tr.minutes : ''}"></div>`);

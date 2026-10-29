@@ -1,5 +1,5 @@
 // Kairos service worker: offline app shell + reminder notifications.
-const CACHE = 'kairos-v3';
+const CACHE = 'kairos-v4';
 const SHELL = ['./', 'index.html', 'styles.css?v=3', 'app.js?v=3', 'manifest.webmanifest', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 self.addEventListener('install', (e) => {

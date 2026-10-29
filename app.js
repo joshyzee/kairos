@@ -599,8 +599,7 @@ function legend(items) { return `<div class="legend">${items.map(([c, l]) => `<s
 function heatmap(n) {
   const weeks = Math.ceil(n / 7) + 1;
   const end = today();
-  const start = addDays(end, -(weeks * 7 - 1));
-  const s0 = addDays(start, -dow(start)); // align columns to Sundays
+  const s0 = addDays(end, -dow(end) - (weeks - 1) * 7); // columns start on Sundays; last column holds today
   const cols = [];
   const W = 340, cell = Math.min(14, Math.floor((W - 4) / weeks) - 2), gap = 2;
   const colors = { 1: '#5B2A86', 2: '#8E2A8A', 3: '#D13A6E', 4: '#FF5C3C', 5: '#FF9A1F' };

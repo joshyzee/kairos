@@ -1,0 +1,8 @@
+The 3D model files in this folder (bones.bin, muscles.bin, skin.bin, dermatomes.bin)
+are adapted from BodyParts3D, © The Database Center for Life Science,
+licensed under Creative Commons Attribution 4.0 International
+(https://creativecommons.org/licenses/by/4.0/).
+Source: https://dbarchive.biosciencedbc.jp/en/bodyparts3d/
+Changes: selected structures merged per muscle/bone, simplified (meshoptimizer),
+re-oriented and quantised for mobile; the skin was split into an approximate
+dermatome map. Nerve paths in manifest.json are schematic and drawn by Kairos.

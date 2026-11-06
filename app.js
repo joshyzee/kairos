@@ -64,6 +64,10 @@ const S = {
   growth: LS.get('growth', null),
   events: LS.get('events', []),
   health: LS.get('health', {}),
+  pain: LS.get('pain', { logs: [] }),
+  painSha: LS.get('painSha', null),
+  painDirty: LS.get('painDirty', false),
+  returnForm: null,
   tab: 'today',
   form: null,
   range: 90,
@@ -147,10 +151,79 @@ async function push() {
   return false;
 }
 
+/* ---------- pain logs (data/pain.json) ---------- */
+// Entries are never hard-deleted: a deleted entry keeps a tombstone so both devices agree.
+function persistPain() { LS.set('pain', S.pain); LS.set('painSha', S.painSha); LS.set('painDirty', S.painDirty); }
+function mergePain(remote, local) {
+  const byId = new Map();
+  for (const l of [...((remote && remote.logs) || []), ...((local && local.logs) || [])]) {
+    const cur = byId.get(l.id);
+    if (!cur || (l.updated || l.at) > (cur.updated || cur.at)) byId.set(l.id, l);
+  }
+  return { logs: [...byId.values()].sort((a, b) => a.at.localeCompare(b.at)) };
+}
+async function pullPain() {
+  const { data, sha } = await getWithSha('data/pain.json');
+  S.pain = S.painDirty ? mergePain(data, S.pain) : (data || { logs: [] });
+  S.painSha = sha; persistPain();
+  if (S.painDirty) await pushPain();
+}
+async function pushPain() {
+  for (let i = 0; i < 3; i++) {
+    try {
+      S.painSha = await putJson('data/pain.json', S.pain, S.painSha, `Pain log ${today()}`);
+      S.painDirty = false; persistPain();
+      return true;
+    } catch (e) {
+      if (e.status === 409 || e.status === 422) {
+        const { data, sha } = await getWithSha('data/pain.json');
+        S.pain = mergePain(data, S.pain); S.painSha = sha;
+      } else throw e;
+    }
+  }
+  return false;
+}
+const painLogs = () => (S.pain.logs || []).filter((l) => !l.deleted);
+async function savePain(log) {
+  S.pain = mergePain(S.pain, { logs: [log] });
+  S.painDirty = true; persistPain();
+  toast('Pain logged');
+  try { await pushPain(); } catch { toast('Saved on this device. Will sync later.'); }
+}
+async function removePain(id) {
+  const l = (S.pain.logs || []).find((x) => x.id === id);
+  if (!l) return;
+  await savePain({ ...l, deleted: true, updated: new Date().toISOString() });
+  toast('Entry deleted');
+}
+
+/* ---------- body map ---------- */
+let bodyMod = null;
+const bodyApi = {
+  logs: painLogs,
+  save: savePain,
+  remove: removePain,
+  fromCheckin: () => !!S.returnForm,
+  back: () => { S.form = S.returnForm; S.returnForm = null; S.tab = 'today'; render(); const el = document.getElementById('pain-today'); if (el) el.scrollIntoView({ block: 'center' }); },
+  focusStructure: null,
+};
+async function mountBody() {
+  const slot = document.getElementById('body-slot');
+  if (!slot) return;
+  try {
+    bodyMod = bodyMod || await import('./body.js?v=4');
+    if (document.getElementById('body-slot') === slot) bodyMod.attach(slot, bodyApi);
+  } catch (e) {
+    slot.innerHTML = `<div class="card"><p class="small muted">The body map couldn’t load. Check your connection and try again.</p></div>`;
+    console.warn(e);
+  }
+}
+
 async function loadAll() {
   const t = today(), y = addDays(t, -1);
   const jobs = [
     pull().catch((e) => console.warn(e)),
+    pullPain().catch((e) => console.warn(e)),
     getJson('calendar/events.json').then((v) => { if (v) { S.events = v; LS.set('events', v); } }).catch(() => {}),
     getJson('brief/latest.json').then((v) => { if (v) { S.brief = v; LS.set('brief', v); } }).catch(() => {}),
     getJson('growth/latest.json').then((v) => { if (v) { S.growth = v; LS.set('growth', v); } }).catch(() => {}),
@@ -322,22 +395,32 @@ function toast(msg) {
 const ICONS = {
   today: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 16a8 8 0 0 1 16 0"/><path d="M12 4v2M4.9 8.9l1.4 1.4M19.1 8.9l-1.4 1.4M2 20h20"/></svg>',
   trends: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l5-5 4 3 8-8"/><path d="M15 7h5v5"/></svg>',
+  body: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="4" r="2"/><path d="M6 8.5l6 1 6-1"/><path d="M12 9.5v5.5"/><path d="M9 21l3-6 3 6"/></svg>',
   journal: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"/><path d="M9 9h6M9 13h4"/></svg>',
   settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
 };
 function tabs() {
   const t = (id, label) => `<button class="${S.tab === id && !S.form ? 'on' : ''}" data-action="tab" data-tab="${id}">${ICONS[id]}${label}</button>`;
-  return `<nav class="tabs">${t('today', 'Today')}${t('trends', 'Trends')}${t('journal', 'Journal')}${t('settings', 'Settings')}</nav>`;
+  return `<nav class="tabs">${t('today', 'Today')}${t('trends', 'Trends')}${t('body', 'Body')}${t('journal', 'Journal')}${t('settings', 'Settings')}</nav>`;
 }
 function render() {
   if (!S.token) { app().innerHTML = viewSetup(); return; }
   let body;
+  const onBody = !S.form && S.tab === 'body';
+  if (!onBody && bodyMod) bodyMod.detach();
   if (S.form) body = viewForm();
   else if (S.tab === 'trends') body = viewTrends();
+  else if (onBody) body = viewBody();
   else if (S.tab === 'journal') body = viewJournal();
   else if (S.tab === 'settings') body = viewSettings();
   else body = viewToday();
-  app().innerHTML = `<div class="wrap">${body}</div>${tabs()}`;
+  app().innerHTML = `<div class="wrap${onBody ? ' wrap-body' : ''}">${body}</div>${tabs()}`;
+  if (onBody) mountBody();
+}
+function viewBody() {
+  return `${S.returnForm ? '' : `<div class="top"><div><h1>Body</h1><div class="sub">Tap where it hurts. Drag to turn, pinch to zoom.</div></div></div>`}
+    ${S.returnForm ? `<div class="top"><div><h1>Log pain</h1><div class="sub">Tap the structure, then “Log pain here”.</div></div></div>` : ''}
+    <div id="body-slot"></div>`;
 }
 
 /* ---------- views ---------- */
@@ -495,6 +578,10 @@ function viewForm() {
     }
     html += q('Soreness', `<div class="scale" data-group="training.soreness">${[1, 2, 3, 4, 5].map((n, i) => `<button data-action="train" data-key="soreness" data-value="${n}" class="${tr.soreness === n ? 'on' : ''}">${n}<small>${['None', '', '', '', 'Very'][i]}</small></button>`).join('')}</div>`);
     html += q('Any niggles?', `<input class="field" data-action="text" data-field="niggle" placeholder="Left hamstring tight" value="${esc(v.niggle || '')}">`, 'optional');
+    const pains = painLogs().filter((l) => l.date === f.date);
+    html += `<div class="section-title" id="pain-today">Any pain today?</div>
+      <div class="ctx">${pains.length ? pains.map((l) => `<div class="pain-line"><span class="pain-sev" style="--sev:${l.intensity}">${l.intensity}</span>${esc(l.name.charAt(0).toUpperCase() + l.name.slice(1))} · ${esc(l.type.toLowerCase())} · ${esc(l.timing.toLowerCase())}</div>`).join('') : '<span class="muted">Nothing logged today.</span>'}
+      <button class="btn full" data-action="bodylog" style="margin-top:10px">${pains.length ? 'Log another on the body map' : 'Log pain on the body map'}</button></div>`;
     html += `<div class="section-title">Today I…</div>`;
     html += q('', choice('ticks', ['Had quiet time', 'Prayed', 'Quality time with her', 'Ate well', 'Drank 2L water', 'Screens off before bed'], true));
     html += q('Study hours', choice('study', ['0', '1', '2', '3', '4', '5+']));
@@ -695,7 +782,8 @@ function viewSettings() {
     <button class="btn full" data-action="sync" style="margin-bottom:8px">Sync now</button>
     <button class="btn full" data-action="export" style="margin-bottom:8px">Download my data</button>
     <button class="btn full" data-action="lock">Lock this device (removes the key)</button></div>
-  <p class="tiny">Kairos · ${S.dirty ? 'unsynced changes on this device' : 'everything synced'}</p>`;
+  <p class="tiny">Kairos · ${S.dirty || S.painDirty ? 'unsynced changes on this device' : 'everything synced'}</p>
+  <p class="tiny" style="margin-top:8px">Body map models: BodyParts3D, © The Database Center for Life Science, licensed under CC BY 4.0, simplified for mobile. Nerve paths and dermatomes are schematic. Kairos is a logging tool, not a diagnosis.</p>`;
 }
 function guessDevice() { return /iPhone|iPad/.test(navigator.userAgent) ? 'iphone' : 'laptop'; }
 function urlB64(s) { const p = '='.repeat((4 - (s.length % 4)) % 4); const b = atob((s + p).replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from([...b].map((c) => c.charCodeAt(0))); }
@@ -718,7 +806,8 @@ document.addEventListener('click', async (ev) => {
   const el = ev.target.closest('[data-action]');
   if (!el) return;
   const a = el.dataset.action, f = S.form;
-  if (a === 'tab') { S.form = null; S.tab = el.dataset.tab; render(); window.scrollTo(0, 0); }
+  if (a === 'tab') { S.form = null; S.returnForm = null; S.tab = el.dataset.tab; render(); window.scrollTo(0, 0); }
+  else if (a === 'bodylog') { S.returnForm = S.form; S.form = null; S.tab = 'body'; render(); window.scrollTo(0, 0); }
   else if (a === 'open') openForm(el.dataset.type, el.dataset.date);
   else if (a === 'close') { S.form = null; render(); }
   else if (a === 'pick') {

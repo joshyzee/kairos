@@ -1,0 +1,7 @@
+{
+  "name": "kairos-body-tools",
+  "private": true,
+  "description": "Builds the Kairos body map assets from BodyParts3D",
+  "scripts": { "build": "node build.js" },
+  "devDependencies": { "meshoptimizer": "0.21.0", "three": "0.160.0" }
+}

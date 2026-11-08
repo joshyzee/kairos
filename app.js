@@ -504,7 +504,7 @@ function viewToday() {
   if (b.myth) {
     const m = b.myth;
     const paras = String(m.text).split(/\n\s*\n/).map((p) => `<p>${esc(p)}</p>`).join('');
-    parts.push(`<details class="card myth"><summary><h3>Myth of the week</h3><div class="myth-title">${esc(m.title)}</div><div class="tiny">${esc(m.tradition || 'Greek and Roman myth')}${m.source ? ` · ${esc(m.source)}` : ''} · tap to read</div></summary>
+    parts.push(`<details class="card myth"><summary><h3>Story of the week</h3><div class="myth-title">${esc(m.title)}</div><div class="tiny">${esc(m.tradition || 'A story worth keeping')}${m.source ? ` · ${esc(m.source)}` : ''} · tap to read</div></summary>
       <div class="myth-body">${paras}${m.lesson ? `<p class="myth-lesson">${esc(m.lesson)}</p>` : ''}</div></details>`);
   }
   if (b.qow && b.qow.text) {

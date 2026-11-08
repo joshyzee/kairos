@@ -200,3 +200,36 @@ svg.chart { width: 100%; height: auto; display: block; }
 .bm-notes { width: 100%; min-height: 72px; background: var(--card-2); border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; font-size: 16px; color: var(--text); resize: vertical; }
 .bm-err { color: var(--bad); font-size: 13px; min-height: 18px; margin-top: 8px; }
 .bm-save { width: 100%; padding: 15px; border-radius: 16px; background: var(--grad); color: #fff; font-size: 17px; font-weight: 700; margin-top: 4px; }
+.chips button.pre { border: 1px dashed var(--line-2); color: var(--text); }
+.toast { white-space: normal; max-width: 90vw; text-align: center; }
+/* speed */
+.pb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 6px; margin-bottom: 10px; }
+.pb { text-align: left; padding: 9px 10px; border-radius: 12px; background: var(--card-2); border: 1px solid var(--line); }
+.pb.on { border-color: var(--orange); }
+.pb span { display: block; font-size: 11px; color: var(--text-3); }
+.pb b { display: block; font-size: 18px; }
+.pb small { font-size: 11px; color: var(--text-3); }
+.time-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.time-row b { width: 52px; }
+.time-row span { font-size: 17px; font-weight: 700; min-width: 70px; }
+.time-row small { flex: 1; color: var(--text-3); font-size: 12px; }
+.time-row em { color: var(--orange); font-style: normal; font-weight: 700; }
+.time-add { display: grid; gap: 8px; margin-top: 8px; }
+/* pain hotspots */
+.hot { width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); text-align: left; }
+.hot:first-of-type { border-top: 0; }
+.hot-name { font-size: 14px; }
+.hot.on .hot-name { color: #FF8DA0; font-weight: 600; }
+.hot-meta { font-size: 12px; color: var(--text-2); white-space: nowrap; }
+.hot-meta .up { color: var(--bad); } .hot-meta .down { color: var(--good); }
+/* week in numbers */
+.week-card .stat small { font-size: 11px; margin-left: 4px; font-weight: 600; }
+.week-card .stat small.good { color: var(--good); } .week-card .stat small.bad { color: var(--bad); }
+/* myth */
+.myth summary { list-style: none; cursor: pointer; }
+.myth summary::-webkit-details-marker { display: none; }
+.myth-title { font-family: var(--serif); font-size: 22px; margin: 2px 0 4px; }
+.myth-body p { font-family: var(--serif); font-size: 16px; line-height: 1.6; margin: 12px 0 0; }
+.myth-body .myth-lesson { font-family: var(--sans); font-size: 14px; color: var(--text-2); border-left: 3px solid var(--orange); padding-left: 10px; }
+.week-card .stat .v { white-space: nowrap; font-size: 20px; }
+.week-card .stat small { font-size: 10px; }

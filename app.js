@@ -28,6 +28,32 @@ const r1 = (x) => (x == null ? '–' : (Math.round(x * 10) / 10).toString());
 const b64enc = (s) => btoa(unescape(encodeURIComponent(s)));
 const b64dec = (s) => decodeURIComponent(escape(atob(s.replace(/\n/g, ''))));
 const weekKey = (s) => addDays(s, (7 - dow(s)) % 7); // the Sunday that ends this week
+// Before 04:00 you're still in last night: evening check-ins belong to the previous day.
+const eveningDay = () => (hour() < 4 ? addDays(today(), -1) : today());
+
+// Bedtime is stored as a label plus minutes after 18:00, so after-midnight times sort correctly.
+const BEDTIMES = ['Before 22:00', '22:00', '22:30', '23:00', '23:30', '00:00', '00:30', '01:00', '01:30', '02:00', '02:30+'];
+function bedMinOf(label) {
+  if (!label) return null;
+  if (label === 'Before 22:00') return 210;
+  const [h, m] = label.replace('+', '').split(':').map(Number);
+  return (h < 18 ? h + 24 : h) * 60 + m - 18 * 60;
+}
+function bedLabelFromTime(d) { // the half-hour slot at or after a clock time
+  let min = (d.getHours() < 18 ? d.getHours() + 24 : d.getHours()) * 60 + d.getMinutes() - 18 * 60;
+  min = Math.ceil(min / 30) * 30;
+  return BEDTIMES.find((b) => bedMinOf(b) >= min) || '02:30+';
+}
+const NAPS = ['None', '20 min', '30 min', '45 min', '1h', '1h30', '2h+'];
+const napMinOf = (label) => ({ None: 0, '20 min': 20, '30 min': 30, '45 min': 45, '1h': 60, '1h30': 90, '2h+': 120 })[label] ?? null;
+// Total sleep for a day: the night before (morning check-in) plus that day's naps (evening check-in).
+function totalSleep(d) {
+  const m = (S.data.days[d] || {}).morning, e = (S.data.days[d] || {}).evening;
+  if (!m || m.sleepHours == null) return null;
+  return m.sleepHours + ((e && e.napMin) || 0) / 60;
+}
+function lastTotals(n) { const out = []; for (let i = 0; i < n; i++) { const v = totalSleep(addDays(today(), -i)); if (v != null) out.push(v); } return out; }
+const clockOf = (bedMin) => { const t = (18 * 60 + Math.round(bedMin)) % (24 * 60); return `${pad(Math.floor(t / 60))}:${pad(t % 60)}`; };
 
 // Apple Health values arrive from the Shortcut as numbers or text ("1 hr 15 min", "1:15:00", "8 432", "512 kcal").
 function toMinutes(v) {
@@ -292,6 +318,7 @@ function brief() {
     fact: (fresh && b.fact) || FACTS[dayIndex() % FACTS.length],
     note: fresh ? b.note : null,
     qow: b.questionOfWeek || null,
+    myth: b.myth && b.myth.text ? b.myth : null,
     flags: fresh ? (b.flags || []) : [],
     questions: fresh && b.date === today() ? (b.questions || null) : null,
   };
@@ -369,8 +396,12 @@ function localFlags() {
   if ((busy.length >= 5 && avg(busy) >= 4) || (sleep.length >= 4 && avg(sleep) < 6.5 && stress.length >= 4 && avg(stress) >= 4)) {
     flags.push({ id: 'break', level: 'warn', title: 'Time for a break', text: 'You’ve been running hot this week. Block two hours with nothing in them — no Kora, no UPCS, no books. Rest is part of the work.' });
   }
-  const s3 = lastN('sleepHours', 3, 'morning');
-  if (s3.length === 3 && avg(s3) < 6) flags.push({ id: 'sleep', level: 'warn', title: 'Sleep debt building', text: `You’ve averaged ${r1(avg(s3))}h over the last 3 nights. Aim for an earlier night tonight.` });
+  const beds = lastN('bedMin', 5, 'morning');
+  const lateN = beds.filter((b) => b >= 360).length; // 360 = midnight
+  const napsCovered = lastTotals(5).length >= 3 && avg(lastTotals(5)) >= 7.5;
+  if (lateN >= 3) flags.push({ id: 'late', level: napsCovered ? 'info' : 'warn', title: napsCovered ? 'Late nights, but naps are covering' : 'Late nights adding up', text: napsCovered ? `Lights out after midnight on ${lateN} of your last ${beds.length} nights, but with naps you're averaging ${r1(avg(lastTotals(5)))}h a day. Night sleep still does the deepest recovery, so aim for one earlier night.` : `Lights out after midnight on ${lateN} of your last ${beds.length} nights. Sprint speed and exam memory both get built in sleep — pick one night this week for lights out by 22:30.` });
+  const s3 = lastTotals(3);
+  if (s3.length === 3 && avg(s3) < 6) flags.push({ id: 'sleep', level: 'warn', title: 'Sleep debt building', text: `Counting naps, you’ve averaged ${r1(avg(s3))}h a day over the last 3 days. Aim for an earlier night tonight.` });
   const a = acwr();
   if (a != null && a > 1.5) flags.push({ id: 'acwr', level: 'bad', title: 'Training load spiking', text: `This week’s load is ${Math.round((a - 1) * 100)}% above your monthly average. That’s the injury zone — ease off.` });
   else if (a != null && a > 1.3) flags.push({ id: 'acwr', level: 'warn', title: 'Training load climbing fast', text: `This week’s load is ${Math.round((a - 1) * 100)}% above your monthly average. Build gradually.` });
@@ -437,7 +468,7 @@ function viewSetup() {
 
 function greeting() {
   const h = hour();
-  return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
+  return h < 4 ? 'Still up' : h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
 }
 
 function viewToday() {
@@ -452,13 +483,13 @@ function viewToday() {
   const wk = weekKey(dow(t) === 1 ? addDays(t, -1) : t);
   const ctas = [];
   if (!yd.evening && hour() < 15 && Object.keys(S.data.days).length) ctas.push(cta('evening', y, 'Catch up on last night', '20 seconds. Keep the streak alive.'));
-  if (!d.morning && hour() < 15) ctas.push(cta('morning', t, 'Morning check-in', 'About 15 seconds'));
+  if (!d.morning && hour() >= 4 && hour() < 15) ctas.push(cta('morning', t, 'Morning check-in', 'About 15 seconds'));
   if (!d.evening && hour() >= 17) ctas.push(cta('evening', t, 'Evening check-in', 'About 45 seconds'));
   if (isWeekend && !(S.data.weeks || {})[wk]) ctas.push(cta('weekly', wk, 'Sunday review', 'About 3 minutes'));
   parts.push(ctas.join(''));
   parts.push(`<div class="done-row">
     <button class="pill-done ${d.morning ? 'ok' : ''}" data-action="open" data-type="morning" data-date="${t}"><span class="dot"></span>Morning${d.morning ? '' : ''}</button>
-    <button class="pill-done ${d.evening ? 'ok' : ''}" data-action="open" data-type="evening" data-date="${t}"><span class="dot"></span>Evening</button>
+    <button class="pill-done ${day(eveningDay()).evening ? 'ok' : ''}" data-action="open" data-type="evening" data-date="${eveningDay()}"><span class="dot"></span>Evening${eveningDay() !== t ? ' (last night)' : ''}</button>
   </div>`);
 
   if (b.note) parts.push(`<div class="card"><p>${esc(b.note)}</p></div>`);
@@ -470,6 +501,12 @@ function viewToday() {
   const f = b.fact;
   parts.push(`<div class="card interrupt"><div class="kicker">${f.type === 'quote' ? 'Quote of the day' : 'Did you know?'}</div><p>${esc(f.text)}</p>${f.source ? `<div class="tiny" style="margin-top:6px">— ${esc(f.source)}</div>` : ''}</div>`);
 
+  if (b.myth) {
+    const m = b.myth;
+    const paras = String(m.text).split(/\n\s*\n/).map((p) => `<p>${esc(p)}</p>`).join('');
+    parts.push(`<details class="card myth"><summary><h3>Myth of the week</h3><div class="myth-title">${esc(m.title)}</div><div class="tiny">${esc(m.tradition || 'Greek and Roman myth')}${m.source ? ` · ${esc(m.source)}` : ''} · tap to read</div></summary>
+      <div class="myth-body">${paras}${m.lesson ? `<p class="myth-lesson">${esc(m.lesson)}</p>` : ''}</div></details>`);
+  }
   if (b.qow && b.qow.text) {
     const answered = (S.data.weeks[weekKey(t)] || {}).qowAnswer;
     parts.push(`<div class="card"><h3>Question of the week</h3><div class="verse" style="font-size:18px">${esc(b.qow.text)}</div><div class="tiny" style="margin-top:8px">${answered ? 'You answered this in your Sunday review.' : 'Sit with it. You’ll answer it in your Sunday review.'}</div></div>`);
@@ -515,7 +552,8 @@ function choice(field, options, multi = false) {
   const v = S.form.values[field];
   return `<div class="chips" data-group="${field}">${options.map((o) => {
     const on = multi ? (v || []).includes(o) : v === o;
-    return `<button data-action="${multi ? 'toggle' : 'pick'}" data-field="${field}" data-value="${esc(o)}" class="${on ? 'on' : ''}">${esc(o)}</button>`;
+    const cls = on ? (!multi && S.form.pre.has(field) ? 'pre' : 'on') : '';
+    return `<button data-action="${multi ? 'toggle' : 'pick'}" data-field="${field}" data-value="${esc(o)}" class="${cls}">${esc(o)}</button>`;
   }).join('')}</div>`;
 }
 function q(label, inner, hint = '') {
@@ -531,6 +569,16 @@ function openForm(type, date) {
     const carry = type === 'morning' ? ['sleepHours', 'sleepQuality'] : ['mood', 'energy', 'stress', 'anxiety', 'busy'];
     if (prev) for (const k of carry) if (prev[k] != null) { values[k] = prev[k]; pre.add(k); }
     if (type === 'morning' && values.sleepHours == null) values.sleepHours = 7;
+    if (type === 'morning') {
+      // Lights out: if last night's check-in was saved late, start from that time; otherwise yesterday's answer.
+      const lastEve = day(addDays(date, -1)).evening;
+      const saved = lastEve && lastEve.at ? new Date(lastEve.at) : null;
+      const late = saved && (saved.getHours() >= 22 || saved.getHours() < 4) ? bedLabelFromTime(saved) : null;
+      const prevBed = prev && prev.bedtime;
+      const guess = late && (!prevBed || bedMinOf(late) > bedMinOf(prevBed)) ? late : prevBed;
+      if (guess) { values.bedtime = guess; pre.add('bedtime'); }
+      if (late) values._lateHint = `${pad(saved.getHours())}:${pad(saved.getMinutes())}`;
+    }
     const h = healthFor(date);
     if (type === 'evening' && h && h.minutes) {
       values.training = { type: null, minutes: h.minutes, rpe: null, fromHealth: true };
@@ -551,6 +599,7 @@ function viewForm() {
   if (f.pre.size) html += `<p class="prefill-note">Dashed answers are yesterday’s. Tap to change what’s different.</p>`;
 
   if (f.type === 'morning') {
+    html += q('Lights out last night', choice('bedtime', BEDTIMES), v._lateHint ? `you checked in at ${v._lateHint}` : '');
     html += q('Hours slept', `<div class="slider"><input type="range" min="3" max="11" step="0.25" value="${v.sleepHours}" data-action="slide" data-field="sleepHours"><output id="o-sleepHours">${fmtHours(v.sleepHours)}</output></div>`);
     html += q('Sleep quality', scale('sleepQuality', 5, ['Awful', '', 'Okay', '', 'Deep']));
     html += q('Waking up, I feel', choice('wake', ['Drained', 'Okay', 'Ready']));
@@ -571,19 +620,20 @@ function viewForm() {
       const bits = [h.minutes ? `${h.minutes} min workout` : null, h.type ? esc(h.type) : null, h.kcal ? `${Math.round(h.kcal)} kcal active` : null, h.steps ? `${Math.round(h.steps).toLocaleString('en-ZA')} steps` : null].filter(Boolean);
       html += `<div class="ctx">From Apple Health: ${bits.join(' · ')}</div>`;
     }
-    html += q('Session', `<div class="chips" data-group="training.type">${['Rest', 'Speed', 'Speed endurance', 'Tempo', 'Gym', 'Technogym cardio', 'Recovery', 'Other'].map((o) => `<button data-action="train" data-key="type" data-value="${o}" class="${tr.type === o ? 'on' : ''}">${o}</button>`).join('')}</div>`);
+    html += q('Session', `<div class="chips" data-group="training.type">${['Rest', 'Speed', 'Speed endurance', 'Tempo', 'Race', 'Gym', 'Technogym cardio', 'Recovery', 'Other'].map((o) => `<button data-action="train" data-key="type" data-value="${o}" class="${tr.type === o ? 'on' : ''}">${o}</button>`).join('')}</div>`);
     if (tr.type && tr.type !== 'Rest') {
       html += q('Minutes', `<div class="chips">${[30, 45, 60, 75, 90, 120].map((m) => `<button data-action="train" data-key="minutes" data-value="${m}" class="${tr.minutes === m ? 'on' : ''}">${m}</button>`).join('')}<input class="field" style="width:90px;padding:9px 12px" inputmode="numeric" placeholder="Other" data-action="trainmin" value="${tr.minutes && ![30, 45, 60, 75, 90, 120].includes(tr.minutes) ? tr.minutes : ''}"></div>`);
       html += q('How intense was it?', `<div class="scale" data-group="training.rpe">${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => `<button data-action="train" data-key="rpe" data-value="${n}" class="${tr.rpe === n ? 'on' : ''}" style="min-height:42px">${n}</button>`).join('')}</div><div class="tiny" style="margin-top:6px">1 = barely working · 7 = hard · 10 = everything you had</div>`);
+      if (['Speed', 'Speed endurance', 'Tempo', 'Race', 'Other'].includes(tr.type)) html += timesBlock(f, tr);
     }
     html += q('Soreness', `<div class="scale" data-group="training.soreness">${[1, 2, 3, 4, 5].map((n, i) => `<button data-action="train" data-key="soreness" data-value="${n}" class="${tr.soreness === n ? 'on' : ''}">${n}<small>${['None', '', '', '', 'Very'][i]}</small></button>`).join('')}</div>`);
-    html += q('Any niggles?', `<input class="field" data-action="text" data-field="niggle" placeholder="Left hamstring tight" value="${esc(v.niggle || '')}">`, 'optional');
     const pains = painLogs().filter((l) => l.date === f.date);
     html += `<div class="section-title" id="pain-today">Any pain today?</div>
       <div class="ctx">${pains.length ? pains.map((l) => `<div class="pain-line"><span class="pain-sev" style="--sev:${l.intensity}">${l.intensity}</span>${esc(l.name.charAt(0).toUpperCase() + l.name.slice(1))} · ${esc(l.type.toLowerCase())} · ${esc(l.timing.toLowerCase())}</div>`).join('') : '<span class="muted">Nothing logged today.</span>'}
       <button class="btn full" data-action="bodylog" style="margin-top:10px">${pains.length ? 'Log another on the body map' : 'Log pain on the body map'}</button></div>`;
     html += `<div class="section-title">Today I…</div>`;
     html += q('', choice('ticks', ['Had quiet time', 'Prayed', 'Quality time with her', 'Ate well', 'Drank 2L water', 'Screens off before bed'], true));
+    html += q('Naps today', choice('nap', NAPS), 'counts towards your sleep');
     html += q('Study hours', choice('study', ['0', '1', '2', '3', '4', '5+']));
     html += questionsBlock('evening');
     html += `<div class="section-title">Journal</div>`;
@@ -593,6 +643,7 @@ function viewForm() {
 
   if (f.type === 'weekly') {
     const b = brief();
+    html += weekNumbers(f.date);
     html += `<div class="section-title">Over the last two weeks, how often have you…</div>`;
     const items = ['Felt nervous, anxious or on edge', 'Not been able to stop or control worrying', 'Had little interest or pleasure in doing things', 'Felt down, depressed or hopeless'];
     items.forEach((it, i) => {
@@ -613,6 +664,69 @@ function viewForm() {
   return html;
 }
 function fmtHours(h) { const hh = Math.floor(h), mm = Math.round((h - hh) * 60); return mm ? `${hh}h${pad(mm)}` : `${hh}h`; }
+
+const DISTS = [60, 100, 150, 200, 250, 300, 350, 400, 500, 600];
+const TKINDS = ['Rep', 'Time trial', 'Race'];
+function timesBlock(f, tr) {
+  const draft = f.values._t || (f.values._t = { dist: null, kind: tr.type === 'Race' ? 'Race' : 'Rep', txt: '' });
+  const pb = bests(f.date);
+  const list = (tr.times || []).map((t, i) => {
+    const isPb = !pb[t.dist] || t.sec < pb[t.dist].sec;
+    return `<div class="time-row"><b>${t.dist}m</b><span>${fmtSec(t.sec)}</span><small>${esc(t.kind)}${isPb ? ' · <em>PB</em>' : ''}</small><button class="bm-x" data-action="tdel" data-i="${i}" aria-label="Remove time">×</button></div>`;
+  }).join('');
+  return q('Times', `${list}
+    <div class="chips" data-group="tdist">${DISTS.map((d) => `<button data-action="tdist" data-value="${d}" class="${draft.dist === d ? 'on' : ''}">${d}</button>`).join('')}</div>
+    <div class="time-add"><input class="field" data-action="ttime" inputmode="decimal" placeholder="${draft.dist && draft.dist >= 400 ? '52.80 or 1:05.4' : '23.41'}" value="${esc(draft.txt)}">
+      <div class="chips">${TKINDS.map((k) => `<button data-action="tkind" data-value="${k}" class="${draft.kind === k ? 'on' : ''}">${k}</button>`).join('')}</div>
+      <button class="btn" data-action="tadd">Add time</button></div>
+    <div class="err" id="t-err"></div>`, 'optional · reps, time trials or races');
+}
+
+// "Your week in numbers": Monday to Sunday ending on the review date, compared with the week before.
+function weekNumbers(end) {
+  const daysOf = (e) => Array.from({ length: 7 }, (_, i) => addDays(e, -6 + i));
+  const stats = (e) => {
+    const ds = daysOf(e), m = ds.map((d) => day(d).morning).filter(Boolean), ev = ds.map((d) => day(d).evening).filter(Boolean);
+    const val = (arr, k) => arr.map((x) => x[k]).filter((x) => x != null);
+    const pains = painLogs().filter((l) => ds.includes(l.date));
+    const hot = {}; pains.forEach((l) => { hot[l.name] = (hot[l.name] || 0) + l.intensity; });
+    return {
+      both: ds.filter((d) => day(d).morning && day(d).evening).length,
+      sleep: avg(ds.map(totalSleep).filter((x) => x != null)), naps: val(ev, 'napMin').reduce((a, b) => a + b, 0), napDays: val(ev, 'napMin').filter((x) => x > 0).length, bed: avg(val(m, 'bedMin')), late: val(m, 'bedMin').filter((b) => b >= 360).length,
+      mood: avg(val(ev, 'mood')), energy: avg(val(ev, 'energy')), stress: avg(val(ev, 'stress')),
+      sessions: ev.filter((x) => x.training && x.training.type && x.training.type !== 'Rest').length,
+      load: ds.reduce((a, d) => a + load(d), 0),
+      study: val(ev, 'studyHours').reduce((a, b) => a + b, 0),
+      quiet: ev.filter((x) => (x.ticks || []).includes('Had quiet time')).length,
+      pain: pains.length, hot: Object.entries(hot).sort((a, b) => b[1] - a[1])[0],
+      pbs: (() => {
+        // One entry per distance: this week's best, if it beat everything before the week
+        const before = {}, week = {};
+        for (const t of allTimes()) {
+          if (t.d < ds[0]) { if (before[t.dist] == null || t.sec < before[t.dist]) before[t.dist] = t.sec; }
+          else if (ds.includes(t.d) && (!week[t.dist] || t.sec < week[t.dist].sec)) week[t.dist] = t;
+        }
+        return Object.values(week).filter((t) => before[t.dist] == null || t.sec < before[t.dist]).sort((a, b) => a.dist - b.dist);
+      })(),
+    };
+  };
+  const w = stats(end), p = stats(addDays(end, -7));
+  const arrow = (a, b, goodUp = true, digits = 1) => { if (a == null || b == null) return ''; const d = a - b; if (Math.abs(d) < Math.pow(10, -digits) / 2) return ''; const up = d > 0; return `<small class="${up === goodUp ? 'good' : 'bad'}">${up ? '▲' : '▼'} ${Math.abs(d).toFixed(digits)}</small>`; };
+  const tile = (k, v, extra = '') => `<div class="stat"><div class="k">${k}</div><div class="v">${v}${extra}</div></div>`;
+  const loadPct = p.load ? Math.round((w.load / p.load - 1) * 100) : null;
+  const lines = [
+    `${w.sessions} training session${w.sessions === 1 ? '' : 's'}${loadPct != null ? `, load ${loadPct >= 0 ? 'up' : 'down'} ${Math.abs(loadPct)}% on last week` : ''}.`,
+    w.pbs.length ? `New PB${w.pbs.length > 1 ? 's' : ''}: ${w.pbs.map((t) => `${t.dist}m ${fmtSec(t.sec)}`).join(', ')}.` : null,
+    w.bed != null ? `Lights out around ${clockOf(w.bed)} on average — ${w.late} night${w.late === 1 ? '' : 's'} after midnight.` : null,
+    w.napDays ? `Naps on ${w.napDays} day${w.napDays === 1 ? '' : 's'}, ${fmtHours(w.naps / 60)} in total (included in average sleep).` : null,
+    `${w.study} study hour${w.study === 1 ? '' : 's'} and quiet time on ${w.quiet} day${w.quiet === 1 ? '' : 's'}.`,
+    w.pain ? `${w.pain} pain entr${w.pain === 1 ? 'y' : 'ies'}${w.hot ? `, mostly ${w.hot[0]}` : ''}.` : 'No pain logged.',
+  ].filter(Boolean);
+  return `<div class="card week-card"><h3>Your week in numbers</h3>
+    <div class="stats">${tile('Avg sleep', w.sleep != null ? r1(w.sleep) + 'h' : '–', arrow(w.sleep, p.sleep))}${tile('Avg mood', r1(w.mood), arrow(w.mood, p.mood))}${tile('Avg stress', r1(w.stress), arrow(w.stress, p.stress, false))}</div>
+    ${lines.map((l) => `<p class="small" style="margin:6px 0 0">${esc(l)}</p>`).join('')}
+    <p class="tiny" style="margin-top:8px">${w.both}/7 days fully checked in. Arrows compare with the week before.</p></div>`;
+}
 function questionsBlock(when) {
   const qs = questionsFor(when);
   if (!qs.length) return '';
@@ -628,6 +742,7 @@ function questionsBlock(when) {
 
 function validate() {
   const f = S.form, v = f.values;
+  if (f.type === 'morning' && !v.bedtime) return 'Pick roughly when the lights went out.';
   if (f.type === 'morning' && !v.sleepQuality) return 'Rate your sleep quality.';
   if (f.type === 'evening') {
     for (const k of ['mood', 'energy', 'stress']) if (!v[k]) return `Pick a number for ${k}.`;
@@ -642,13 +757,22 @@ async function saveForm() {
   if (err) { S.form.error = err; const el = $('#form-err'); if (el) el.textContent = err; return; }
   const f = S.form;
   const v = { ...f.values, at: new Date().toISOString() };
+  delete v._lateHint; delete v._t;
+  if (f.type === 'morning') v.bedMin = bedMinOf(v.bedtime);
+  let pbMsg = null;
+  if (f.type === 'evening' && v.training && v.training.times && v.training.times.length) {
+    const pb = bests(f.date);
+    const fresh = v.training.times.filter((t) => !pb[t.dist] || t.sec < pb[t.dist].sec);
+    if (fresh.length && allTimes().some((t) => t.d !== f.date)) pbMsg = `New PB: ${fresh.map((t) => `${t.dist}m ${fmtSec(t.sec)}`).join(', ')}`;
+  }
+  if (f.type === 'evening' && v.nap != null) v.napMin = napMinOf(v.nap);
   if (v.study != null) v.studyHours = v.study === '5+' ? 5 : Number(v.study);
   if (f.type === 'evening' && v.training.type === 'Rest') v.training = { type: 'Rest', minutes: 0, rpe: 0, soreness: v.training.soreness || null };
   if (f.type === 'weekly') { v.phqTotal = phq(v); S.data.weeks[f.date] = v; }
   else { S.data.days[f.date] = S.data.days[f.date] || {}; S.data.days[f.date][f.type] = v; }
   S.dirty = true; persist();
   S.form = null; S.tab = 'today'; render(); window.scrollTo(0, 0);
-  toast('Saved');
+  toast(pbMsg ? `Saved · ${pbMsg} 🔥` : 'Saved');
   try { await push(); render(); } catch (e) { toast('Saved on this device. Will sync later.'); }
 }
 
@@ -664,13 +788,14 @@ function rolling(pts, w = 7) {
     return { d: p.d, y: win.length >= Math.min(3, w) ? avg(win) : null };
   });
 }
-function lineChart(series, { min, max, h = 150, smooth = 7 } = {}) {
-  const W = 340, H = h, P = { l: 22, r: 6, t: 8, b: 18 };
+function lineChart(series, { min, max, h = 150, smooth = 7, yfmt = r1 } = {}) {
+  const labelW = Math.max(...[min, (min + max) / 2, max].map((g) => String(yfmt(g)).length)) * 5.2 + 6;
+  const W = 340, H = h, P = { l: Math.max(22, labelW), r: 6, t: 8, b: 18 };
   const n = series[0].pts.length;
   const x = (i) => P.l + (i / Math.max(1, n - 1)) * (W - P.l - P.r);
   const y = (v) => P.t + (1 - (v - min) / (max - min)) * (H - P.t - P.b);
   let svg = `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img">`;
-  for (const g of [min, (min + max) / 2, max]) svg += `<line x1="${P.l}" x2="${W - P.r}" y1="${y(g)}" y2="${y(g)}" stroke="rgba(255,255,255,.07)"/><text x="${P.l - 5}" y="${y(g) + 3}" fill="#7D7487" font-size="9" text-anchor="end">${r1(g)}</text>`;
+  for (const g of [min, (min + max) / 2, max]) svg += `<line x1="${P.l}" x2="${W - P.r}" y1="${y(g)}" y2="${y(g)}" stroke="rgba(255,255,255,.07)"/><text x="${P.l - 5}" y="${y(g) + 3}" fill="#7D7487" font-size="9" text-anchor="end">${yfmt(g)}</text>`;
   const ticks = [0, Math.floor(n / 2), n - 1];
   for (const i of ticks) svg += `<text x="${x(i)}" y="${H - 4}" fill="#7D7487" font-size="9" text-anchor="${i === 0 ? 'start' : i === n - 1 ? 'end' : 'middle'}">${fmtDay(series[0].pts[i].d, { day: 'numeric', month: 'short' })}</text>`;
   for (const s of series) {
@@ -707,6 +832,9 @@ function links() {
   const pairs = days.map((d) => ({ s: (day(d).morning || {}).sleepHours, m: (day(d).evening || {}).mood, st: (day(d).evening || {}).stress, d }));
   const lo = pairs.filter((p) => p.s != null && p.m != null && p.s < 6.5).map((p) => p.m);
   const hi = pairs.filter((p) => p.s != null && p.m != null && p.s >= 7).map((p) => p.m);
+  const bedE = days.map((d) => ({ b: (day(d).morning || {}).bedMin, e: (day(d).evening || {}).energy })).filter((x) => x.b != null && x.e);
+  const lateE = bedE.filter((x) => x.b >= 360).map((x) => x.e), earlyE = bedE.filter((x) => x.b <= 300).map((x) => x.e);
+  if (lateE.length >= 4 && earlyE.length >= 4) out.push(`After lights out past midnight, your energy that day averages <b>${r1(avg(lateE))}</b>, versus <b>${r1(avg(earlyE))}</b> after nights in bed by 23:00.`);
   if (lo.length >= 5 && hi.length >= 5) out.push(`On nights under 6½ hours, your mood the next evening averages <b>${r1(avg(lo))}</b>, versus <b>${r1(avg(hi))}</b> after 7+ hours.`);
   const testDays = new Set(S.events.filter((e) => e.kind === 'test' || e.kind === 'exam').flatMap((e) => { const d = e.start.slice(0, 10); return [addDays(d, -1), d]; }));
   const st1 = pairs.filter((p) => p.st != null && testDays.has(p.d)).map((p) => p.st);
@@ -731,13 +859,20 @@ function viewTrends() {
   const a = acwr();
   html += `<div class="stats">
     <div class="stat"><div class="k">Avg mood</div><div class="v">${r1(avg(lastN('mood', n)))}</div></div>
-    <div class="stat"><div class="k">Avg sleep</div><div class="v">${r1(avg(lastN('sleepHours', n, 'morning')))}h</div></div>
+    <div class="stat"><div class="k">Avg sleep</div><div class="v">${r1(avg(lastTotals(n)))}h</div></div>
     <div class="stat"><div class="k">Load ratio</div><div class="v" style="color:${a == null ? 'inherit' : a > 1.5 ? 'var(--bad)' : a > 1.3 ? 'var(--warn)' : 'var(--good)'}">${a == null ? '–' : r1(a)}</div></div>
   </div>`;
   if (logged.length < 3) html += `<div class="card"><p class="muted small">Your graphs fill in as you log. Patterns start showing after about three weeks.</p></div>`;
   html += `<div class="card"><h3>Every day, coloured by mood</h3>${heatmap(n === 365 ? 364 : Math.max(n, 84))}</div>`;
   html += `<div class="card"><h3>Mind · 7-day average</h3>${lineChart([{ pts: seriesFor(ev('mood'), n), color: '#FF9A1F' }, { pts: seriesFor(ev('energy'), n), color: '#3DDC97' }, { pts: seriesFor(ev('stress'), n), color: '#FF3D5A' }, { pts: seriesFor(ev('anxiety'), n), color: '#9B8CFF' }], { min: 1, max: 5 })}${legend([['#FF9A1F', 'Mood'], ['#3DDC97', 'Energy'], ['#FF3D5A', 'Stress'], ['#9B8CFF', 'Anxiety']])}</div>`;
-  html += `<div class="card"><h3>Sleep</h3>${lineChart([{ pts: seriesFor(mo('sleepHours'), n), color: '#7FB8FF' }], { min: 4, max: 10 })}${legend([['#7FB8FF', 'Hours slept']])}</div>`;
+  html += `<div class="card"><h3>Sleep</h3>${lineChart([{ pts: seriesFor(mo('sleepHours'), n), color: '#7FB8FF' }, { pts: seriesFor(totalSleep, n), color: '#3DDC97' }], { min: 4, max: 11 })}${legend([['#7FB8FF', 'Night'], ['#3DDC97', 'Night + naps']])}</div>`;
+  const bedPts = seriesFor(mo('bedMin'), n);
+  if (bedPts.some((p) => p.y != null)) {
+    const recent = lastN('bedMin', 7, 'morning');
+    html += `<div class="card"><h3>Lights out</h3>${lineChart([{ pts: bedPts, color: '#9B8CFF' }], { min: 210, max: 510, yfmt: clockOf })}${legend([['#9B8CFF', 'Bedtime (higher = later)']])}<p class="tiny" style="margin-top:6px">${recent.length ? `Last 7 nights: average ${clockOf(avg(recent))}, ${recent.filter((b) => b >= 360).length} after midnight.` : ''}</p></div>`;
+  }
+  html += speedCard(n);
+  html += painCard(n);
   // training load bars
   const lp = seriesFor(load, n), maxL = Math.max(400, ...lp.map((p) => p.y || 0));
   const W = 340, H = 130, bw = (W - 8) / n;
@@ -755,6 +890,76 @@ function viewTrends() {
   const lk = links();
   html += `<div class="card"><h3>Patterns</h3>${lk.length ? lk.map((l) => `<div class="link-row">${l}</div>`).join('') : '<p class="small muted">Patterns appear once there’s enough data — usually 3–4 weeks.</p>'}</div>`;
   return html;
+}
+
+/* ---------- speed: times and PBs ---------- */
+function allTimes() {
+  const out = [];
+  for (const d of sortedDays()) for (const t of (((day(d).evening || {}).training || {}).times || [])) out.push({ ...t, d });
+  return out;
+}
+function fmtSec(s) { if (s == null) return '–'; if (s < 60) return s.toFixed(2); const m = Math.floor(s / 60); return `${m}:${(s - m * 60).toFixed(2).padStart(5, '0')}`; }
+function parseSec(txt) {
+  const s = String(txt || '').trim().replace(',', '.');
+  if (!s) return null;
+  if (s.includes(':')) { const [m, sec] = s.split(':'); const v = Number(m) * 60 + Number(sec); return isNaN(v) ? null : v; }
+  const v = Number(s); return isNaN(v) || v <= 0 ? null : v;
+}
+function bests(excludeDate) {
+  const b = {};
+  for (const t of allTimes()) { if (t.d === excludeDate) continue; if (!b[t.dist] || t.sec < b[t.dist].sec) b[t.dist] = t; }
+  return b;
+}
+function speedCard(n) {
+  const times = allTimes();
+  if (!times.length) return `<div class="card"><h3>Speed</h3><p class="small muted">Add your rep and race times in the evening check-in (Training → Times). Your PBs and speed trend will show here.</p></div>`;
+  const pb = bests(null);
+  const dists = Object.keys(pb).map(Number).sort((a, b) => a - b);
+  const counts = {}; times.forEach((t) => { counts[t.dist] = (counts[t.dist] || 0) + 1; });
+  const pick = S.speedDist && pb[S.speedDist] ? S.speedDist : [...dists].sort((a, b) => counts[b] - counts[a] || (b === 400) - (a === 400))[0];
+  const inRange = times.filter((t) => t.dist === pick && daysBetween(t.d, today()) < n);
+  // Best time per day for the chosen distance
+  const perDay = {}; inRange.forEach((t) => { perDay[t.d] = Math.min(perDay[t.d] || Infinity, t.sec); });
+  const pts = seriesFor((d) => (perDay[d] != null ? perDay[d] : null), n);
+  const vals = Object.values(perDay);
+  const lo = vals.length ? Math.min(...vals) : 0, hi = vals.length ? Math.max(...vals) : 1;
+  const pad2 = Math.max(0.3, (hi - lo) * 0.15);
+  let html = `<div class="card"><h3>Speed · PBs</h3>
+    <div class="pb-grid">${dists.map((d) => `<button class="pb ${d === pick ? 'on' : ''}" data-action="speeddist" data-value="${d}"><span>${d}m</span><b>${fmtSec(pb[d].sec)}</b><small>${fmtDay(pb[d].d, { day: 'numeric', month: 'short' })}</small></button>`).join('')}</div>`;
+  if (vals.length >= 2) html += `${lineChart([{ pts, color: '#FF8A00' }], { min: Math.max(0, lo - pad2), max: hi + pad2, h: 130, smooth: 1, yfmt: (v) => fmtSec(v) })}${legend([['#FF8A00', `${pick}m best time each day (lower = faster)`]])}`;
+  else html += `<p class="tiny" style="margin-top:8px">${vals.length ? 'One time logged in this range. The chart appears from two.' : `No ${pick}m times in this range.`}</p>`;
+  return html + '</div>';
+}
+
+/* ---------- pain on trends ---------- */
+function painCard(n) {
+  const cut = addDays(today(), -(n - 1));
+  const logs = painLogs().filter((l) => l.date >= cut);
+  if (!logs.length) return `<div class="card"><h3>Pain hotspots</h3><p class="small muted">Nothing logged on the body map in this range.</p></div>`;
+  const by = {};
+  for (const l of logs) { const b = by[l.structure] || (by[l.structure] = { name: l.name, n: 0, sum: 0, recent: [], earlier: [] }); b.n++; b.sum += l.intensity; (daysBetween(l.date, today()) < 7 ? b.recent : b.earlier).push(l.intensity); }
+  const top = Object.entries(by).sort((a, b) => b[1].sum - a[1].sum).slice(0, 4);
+  const pick = S.painPick && by[S.painPick] ? S.painPick : top[0][0];
+  // Chart: daily training load as faint bars, chosen structure's worst pain that day as dots (0–10)
+  const W = 340, H = 140, P = { l: 20, r: 6, t: 8, b: 18 };
+  const lp = seriesFor(load, n), maxL = Math.max(400, ...lp.map((p) => p.y || 0));
+  const painDay = {}; logs.filter((l) => l.structure === pick).forEach((l) => { painDay[l.date] = Math.max(painDay[l.date] || 0, l.intensity); });
+  const x = (i) => P.l + (i / Math.max(1, n - 1)) * (W - P.l - P.r);
+  const y = (v) => P.t + (1 - v / 10) * (H - P.t - P.b);
+  let svg = `<svg class="chart" viewBox="0 0 ${W} ${H}">`;
+  for (const g of [0, 5, 10]) svg += `<line x1="${P.l}" x2="${W - P.r}" y1="${y(g)}" y2="${y(g)}" stroke="rgba(255,255,255,.07)"/><text x="${P.l - 5}" y="${y(g) + 3}" fill="#7D7487" font-size="9" text-anchor="end">${g}</text>`;
+  const bw = Math.max(1, (W - P.l - P.r) / n - 1);
+  lp.forEach((p, i) => { if (p.y) { const hh = (p.y / maxL) * (H - P.t - P.b); svg += `<rect x="${x(i) - bw / 2}" y="${H - P.b - hh}" width="${bw}" height="${hh}" fill="rgba(255,255,255,.09)" rx="1"/>`; } });
+  let path = '', pen = false;
+  lp.forEach((p, i) => { const v = painDay[p.d]; if (v == null) return; path += `${pen ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`; pen = true; });
+  if (path) svg += `<path d="${path}" fill="none" stroke="#FF3D5A" stroke-width="1.5" stroke-opacity=".6"/>`;
+  lp.forEach((p, i) => { const v = painDay[p.d]; if (v != null) svg += `<circle cx="${x(i)}" cy="${y(v)}" r="3.5" fill="#FF3D5A"/>`; });
+  svg += `<text x="${P.l}" y="${H - 4}" fill="#7D7487" font-size="9">${fmtDay(lp[0].d, { day: 'numeric', month: 'short' })}</text><text x="${W - P.r}" y="${H - 4}" fill="#7D7487" font-size="9" text-anchor="end">Today</text></svg>`;
+  const trend = (b) => { if (!b.recent.length || !b.earlier.length) return ''; const dlt = avg(b.recent) - avg(b.earlier); return dlt > 0.5 ? '<span class="up">worse</span>' : dlt < -0.5 ? '<span class="down">easing</span>' : '<span>steady</span>'; };
+  return `<div class="card"><h3>Pain hotspots</h3>
+    ${top.map(([id, b]) => `<button class="hot ${id === pick ? 'on' : ''}" data-action="painpick" data-value="${esc(id)}"><span class="hot-name">${esc(b.name.charAt(0).toUpperCase() + b.name.slice(1))}</span><span class="hot-meta">${b.n}× · avg ${r1(b.sum / b.n)} ${trend(b)}</span></button>`).join('')}
+    <div style="margin-top:10px">${svg}</div>${legend([['#FF3D5A', 'Pain that day (0–10)'], ['rgba(255,255,255,.25)', 'Training load']])}
+    <button class="btn full" data-action="painbody" data-value="${esc(pick)}" style="margin-top:10px">Show on body map</button></div>`;
 }
 
 /* ---------- journal ---------- */
@@ -837,6 +1042,18 @@ document.addEventListener('click', async (ev) => {
     el.parentElement.querySelectorAll('button').forEach((b) => b.classList.remove('on')); el.classList.add('on');
   } else if (a === 'save') saveForm();
   else if (a === 'range') { S.range = Number(el.dataset.value); render(); }
+  else if (a === 'speeddist') { S.speedDist = Number(el.dataset.value); render(); }
+  else if (a === 'painpick') { S.painPick = el.dataset.value; render(); }
+  else if (a === 'painbody') { bodyApi.focusStructure = el.dataset.value; S.tab = 'body'; render(); window.scrollTo(0, 0); }
+  else if (a === 'tdist') { f.values._t.dist = Number(el.dataset.value); render(); const t = $('[data-action="ttime"]'); if (t) t.focus(); }
+  else if (a === 'tkind') { f.values._t.kind = el.dataset.value; el.parentElement.querySelectorAll('button').forEach((b) => b.classList.remove('on')); el.classList.add('on'); }
+  else if (a === 'tadd') {
+    const d = f.values._t, sec = parseSec(d.txt), errEl = $('#t-err');
+    if (!d.dist) { if (errEl) errEl.textContent = 'Pick a distance first.'; return; }
+    if (sec == null) { if (errEl) errEl.textContent = 'Type a time like 23.41 or 1:05.4.'; return; }
+    f.values.training.times = [...(f.values.training.times || []), { dist: d.dist, sec: Math.round(sec * 100) / 100, kind: d.kind }];
+    d.txt = ''; render();
+  } else if (a === 'tdel') { f.values.training.times.splice(Number(el.dataset.i), 1); render(); }
   else if (a === 'unlock') unlock();
   else if (a === 'push') enablePush().catch((e) => toast('Couldn’t turn on reminders: ' + e.message));
   else if (a === 'sync') { toast('Syncing…'); try { await loadAll(); render(); toast('Up to date'); } catch { toast('Couldn’t reach GitHub'); } }
@@ -851,6 +1068,7 @@ document.addEventListener('input', (ev) => {
   const el = ev.target, a = el.dataset.action, f = S.form;
   if (a === 'slide') { const v = Number(el.value); f.values[el.dataset.field] = v; f.pre.delete(el.dataset.field); const o = $('#o-' + el.dataset.field); if (o) o.textContent = fmtHours(v); }
   else if (a === 'text') f.values[el.dataset.field] = el.value;
+  else if (a === 'ttime') { f.values._t.txt = el.value; const e2 = $('#t-err'); if (e2) e2.textContent = ''; }
   else if (a === 'trainmin') { const n = parseInt(el.value, 10); f.values.training.minutes = isNaN(n) ? null : n; el.parentElement.querySelectorAll('button').forEach((b) => b.classList.remove('on')); }
   else if (a === 'answertext') f.values.answers[el.dataset.id] = el.value;
   else if (a === 'search') { S.jq = el.value; const pos = el.selectionStart; render(); const s = $('[data-action="search"]'); s.focus(); s.setSelectionRange(pos, pos); }
@@ -883,7 +1101,7 @@ if (S.token) {
   loadAll().then(() => {
     render();
     const want = new URLSearchParams(location.search).get('open');
-    if (want === 'morning' || want === 'evening') { const d = today(); if (!day(d)[want]) openForm(want, d); }
+    if (want === 'morning' || want === 'evening') { const d = want === 'evening' ? eveningDay() : today(); if (!day(d)[want]) openForm(want, d); }
     if (want === 'weekly') openForm('weekly', weekKey(dow(today()) === 1 ? addDays(today(), -1) : today()));
     if (want) history.replaceState(null, '', location.pathname);
   }).catch(() => render());

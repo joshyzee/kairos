@@ -233,3 +233,4 @@ svg.chart { width: 100%; height: auto; display: block; }
 .myth-body .myth-lesson { font-family: var(--sans); font-size: 14px; color: var(--text-2); border-left: 3px solid var(--orange); padding-left: 10px; }
 .week-card .stat .v { white-space: nowrap; font-size: 20px; }
 .week-card .stat small { font-size: 10px; }
+.myth-body .myth-reflect { font-family: var(--sans); font-size: 14px; margin-top: 10px; }

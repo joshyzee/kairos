@@ -45,6 +45,20 @@ function bedLabelFromTime(d) { // the half-hour slot at or after a clock time
   return BEDTIMES.find((b) => bedMinOf(b) >= min) || '02:30+';
 }
 const NAPS = ['None', '20 min', '30 min', '45 min', '1h', '1h30', '2h+'];
+// Training plan: asked in the evening for tomorrow, confirmed the next morning.
+const SESSIONS = ['Rest', 'Speed', 'Speed endurance', 'Tempo', 'Race', 'Gym', 'Technogym cardio', 'Recovery', 'Other'];
+const TRAIN_TIMES = ['05:30', '06:00', '06:30', '07:00', '12:00', '14:00', '15:00', '15:30', '16:00', '16:30', '17:00', '17:30', '18:00', 'Not sure yet'];
+// A calendar event on that day that looks like training (Tuks athletics, gym, track).
+function trainingEvent(d) { return (typeof S !== 'undefined' && S.events ? eventsOn(d) : []).find((e) => !e.allDay && /train|athlet|track|tuks|gym|sprint|session|practice/i.test(e.title)); }
+// What's planned for a day: the morning confirmation wins, then the evening-before plan, then the calendar.
+function planFor(d) {
+  const m = day(d).morning, e = day(addDays(d, -1)).evening, ev = trainingEvent(d);
+  if (m && m.trainType) return { type: m.trainType, time: m.trainTime, confirmed: true };
+  if (e && e.planType) return { type: e.planType, time: e.planTime, confirmed: false };
+  if (ev) return { type: null, time: ev.start.slice(11, 16), confirmed: false, cal: ev.title };
+  return null;
+}
+const timeOpts = (t) => (t && !TRAIN_TIMES.includes(t) ? [...TRAIN_TIMES.slice(0, -1), t, 'Not sure yet'].sort((a, b) => (a === 'Not sure yet') - (b === 'Not sure yet') || a.localeCompare(b)) : TRAIN_TIMES);
 const napMinOf = (label) => ({ None: 0, '20 min': 20, '30 min': 30, '45 min': 45, '1h': 60, '1h30': 90, '2h+': 120 })[label] ?? null;
 // Total sleep for a day: the night before (morning check-in) plus that day's naps (evening check-in).
 function totalSleep(d) {
@@ -512,6 +526,17 @@ function viewToday() {
     parts.push(`<div class="card"><h3>Question of the week</h3><div class="verse" style="font-size:18px">${esc(b.qow.text)}</div><div class="tiny" style="margin-top:8px">${answered ? 'You answered this in your Sunday review.' : 'Sit with it. You’ll answer it in your Sunday review.'}</div></div>`);
   }
 
+  // Training: today's (confirmed or planned) and, once tonight's check-in is in, tomorrow's.
+  const tp = planFor(t), tmr = (day(t).evening || {}).planType ? planFor(addDays(t, 1)) : null;
+  const tline = (label, p) => {
+    if (!p) return '';
+    const what = p.type ? (p.type === 'Rest' ? 'Rest day' : esc(p.type)) : esc(shortTitle(p.cal || 'Training'));
+    const when = p.type !== 'Rest' && p.time && p.time !== 'Not sure yet' ? ` · ${esc(p.time)}` : (p.time === 'Not sure yet' ? ' · time not set' : '');
+    const tag = p.confirmed ? 'Confirmed' : p.cal && !p.type ? 'Calendar' : 'Planned';
+    return `<div class="ev"><div class="when">${label}</div><div class="what">${what}${when}</div><span class="tag event">${tag}</span></div>`;
+  };
+  if (tp || tmr) parts.push(`<div class="card"><h3>Training</h3>${tline('Today', tp)}${tline('Tomorrow', tmr)}</div>`);
+
   // Today + next up
   const todays = eventsOn(t);
   if (todays.length) {
@@ -578,6 +603,19 @@ function openForm(type, date) {
       const guess = late && (!prevBed || bedMinOf(late) > bedMinOf(prevBed)) ? late : prevBed;
       if (guess) { values.bedtime = guess; pre.add('bedtime'); }
       if (late) values._lateHint = `${pad(saved.getHours())}:${pad(saved.getMinutes())}`;
+      // Today's training: start from last night's plan (or the calendar) so confirming is one glance.
+      const p = planFor(date);
+      if (p && p.type) { values.trainType = p.type; pre.add('trainType'); }
+      if (p && p.time) { values.trainTime = p.time; pre.add('trainTime'); }
+      if (p && p.cal) values._calHint = p.cal;
+    }
+    if (type === 'evening') {
+      // Tomorrow's training: calendar time if there is one.
+      const ev = trainingEvent(addDays(date, 1));
+      if (ev) { values.planTime = ev.start.slice(11, 16); pre.add('planTime'); values._calHint = shortTitle(ev.title); }
+      // Today's session type: what was confirmed this morning.
+      const m = day(date).morning;
+      if (m && m.trainType && !(values.training && values.training.type)) values.training = { ...(values.training || {}), type: m.trainType };
     }
     const h = healthFor(date);
     if (type === 'evening' && h && h.minutes) {
@@ -603,6 +641,11 @@ function viewForm() {
     html += q('Hours slept', `<div class="slider"><input type="range" min="3" max="11" step="0.25" value="${v.sleepHours}" data-action="slide" data-field="sleepHours"><output id="o-sleepHours">${fmtHours(v.sleepHours)}</output></div>`);
     html += q('Sleep quality', scale('sleepQuality', 5, ['Awful', '', 'Okay', '', 'Deep']));
     html += q('Waking up, I feel', choice('wake', ['Drained', 'Okay', 'Ready']));
+    html += `<div class="section-title">Today’s training</div>`;
+    if (f.pre.has('trainType') || f.pre.has('trainTime')) html += `<p class="tiny" style="margin:-4px 0 8px">From last night’s plan${v._calHint ? ' and your calendar' : ''}. Tap only what’s changed.</p>`;
+    else if (v._calHint) html += `<p class="tiny" style="margin:-4px 0 8px">Your calendar has ${esc(shortTitle(v._calHint))}.</p>`;
+    html += q('Session', choice('trainType', SESSIONS));
+    if (v.trainType !== 'Rest') html += q('What time?', choice('trainTime', timeOpts(v.trainTime)));
     html += questionsBlock('morning');
   }
 
@@ -620,13 +663,17 @@ function viewForm() {
       const bits = [h.minutes ? `${h.minutes} min workout` : null, h.type ? esc(h.type) : null, h.kcal ? `${Math.round(h.kcal)} kcal active` : null, h.steps ? `${Math.round(h.steps).toLocaleString('en-ZA')} steps` : null].filter(Boolean);
       html += `<div class="ctx">From Apple Health: ${bits.join(' · ')}</div>`;
     }
-    html += q('Session', `<div class="chips" data-group="training.type">${['Rest', 'Speed', 'Speed endurance', 'Tempo', 'Race', 'Gym', 'Technogym cardio', 'Recovery', 'Other'].map((o) => `<button data-action="train" data-key="type" data-value="${o}" class="${tr.type === o ? 'on' : ''}">${o}</button>`).join('')}</div>`);
+    html += q('Session', `<div class="chips" data-group="training.type">${SESSIONS.map((o) => `<button data-action="train" data-key="type" data-value="${o}" class="${tr.type === o ? 'on' : ''}">${o}</button>`).join('')}</div>`);
     if (tr.type && tr.type !== 'Rest') {
       html += q('Minutes', `<div class="chips">${[30, 45, 60, 75, 90, 120].map((m) => `<button data-action="train" data-key="minutes" data-value="${m}" class="${tr.minutes === m ? 'on' : ''}">${m}</button>`).join('')}<input class="field" style="width:90px;padding:9px 12px" inputmode="numeric" placeholder="Other" data-action="trainmin" value="${tr.minutes && ![30, 45, 60, 75, 90, 120].includes(tr.minutes) ? tr.minutes : ''}"></div>`);
       html += q('How intense was it?', `<div class="scale" data-group="training.rpe">${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => `<button data-action="train" data-key="rpe" data-value="${n}" class="${tr.rpe === n ? 'on' : ''}" style="min-height:42px">${n}</button>`).join('')}</div><div class="tiny" style="margin-top:6px">1 = barely working · 7 = hard · 10 = everything you had</div>`);
       if (['Speed', 'Speed endurance', 'Tempo', 'Race', 'Other'].includes(tr.type)) html += timesBlock(f, tr);
     }
     html += q('Soreness', `<div class="scale" data-group="training.soreness">${[1, 2, 3, 4, 5].map((n, i) => `<button data-action="train" data-key="soreness" data-value="${n}" class="${tr.soreness === n ? 'on' : ''}">${n}<small>${['None', '', '', '', 'Very'][i]}</small></button>`).join('')}</div>`);
+    html += `<div class="section-title">Tomorrow’s training</div>`;
+    if (v._calHint) html += `<p class="tiny" style="margin:-4px 0 8px">Your calendar has ${esc(v._calHint)} at ${esc(v.planTime)}.</p>`;
+    html += q('What session is it?', choice('planType', SESSIONS));
+    if (v.planType !== 'Rest') html += q('What time?', choice('planTime', timeOpts(v.planTime)));
     const pains = painLogs().filter((l) => l.date === f.date);
     html += `<div class="section-title" id="pain-today">Any pain today?</div>
       <div class="ctx">${pains.length ? pains.map((l) => `<div class="pain-line"><span class="pain-sev" style="--sev:${l.intensity}">${l.intensity}</span>${esc(l.name.charAt(0).toUpperCase() + l.name.slice(1))} · ${esc(l.type.toLowerCase())} · ${esc(l.timing.toLowerCase())}</div>`).join('') : '<span class="muted">Nothing logged today.</span>'}
@@ -748,7 +795,10 @@ function validate() {
     for (const k of ['mood', 'energy', 'stress']) if (!v[k]) return `Pick a number for ${k}.`;
     if (!v.training.type) return 'Pick a training session, or Rest.';
     if (v.training.type !== 'Rest' && (!v.training.minutes || !v.training.rpe)) return 'Add minutes and how intense the session was.';
+    if (!v.planType) return 'Pick tomorrow’s session, or Rest.';
+    if (v.planType !== 'Rest' && !v.planTime) return 'Pick when tomorrow’s session is (or “Not sure yet”).';
   }
+  if (f.type === 'morning' && !v.trainType) return 'Confirm today’s session, or Rest.';
   if (f.type === 'weekly' && v.phq.some((x) => x == null)) return 'Answer the four questions at the top.';
   return '';
 }
@@ -757,7 +807,9 @@ async function saveForm() {
   if (err) { S.form.error = err; const el = $('#form-err'); if (el) el.textContent = err; return; }
   const f = S.form;
   const v = { ...f.values, at: new Date().toISOString() };
-  delete v._lateHint; delete v._t;
+  delete v._lateHint; delete v._t; delete v._calHint;
+  if (v.trainType === 'Rest') delete v.trainTime;
+  if (v.planType === 'Rest') delete v.planTime;
   if (f.type === 'morning') v.bedMin = bedMinOf(v.bedtime);
   let pbMsg = null;
   if (f.type === 'evening' && v.training && v.training.times && v.training.times.length) {
@@ -1032,6 +1084,7 @@ document.addEventListener('click', async (ev) => {
     f.pre.delete(field);
     el.parentElement.querySelectorAll('button').forEach((b) => b.className = '');
     el.className = 'on';
+    if (field === 'trainType' || field === 'planType') render();
   } else if (a === 'toggle') {
     const field = el.dataset.field, v = el.dataset.value;
     const arr = f.values[field] || [];

@@ -809,22 +809,33 @@ function lineChart(series, { min, max, h = 150, smooth = 7, yfmt = r1 } = {}) {
 }
 function legend(items) { return `<div class="legend">${items.map(([c, l]) => `<span><i style="background:${c}"></i>${l}</span>`).join('')}</div>`; }
 function heatmap(n) {
+  // Columns are weeks (Sunday to Saturday). The last column is always the current week, so today is always on the grid.
   const weeks = Math.ceil(n / 7) + 1;
   const end = today();
-  const start = addDays(end, -(weeks * 7 - 1));
-  const s0 = addDays(start, -dow(start)); // align columns to Sundays
-  const cols = [];
-  const W = 340, cell = Math.min(14, Math.floor((W - 4) / weeks) - 2), gap = 2;
-  const colors = { 1: '#5B2A86', 2: '#8E2A8A', 3: '#D13A6E', 4: '#FF5C3C', 5: '#FF9A1F' };
-  let svg = `<svg class="chart" viewBox="0 0 ${weeks * (cell + gap)} ${7 * (cell + gap)}">`;
-  for (let w = 0; w < weeks; w++) for (let r = 0; r < 7; r++) {
-    const d = addDays(s0, w * 7 + r);
-    if (d > end) continue;
-    const m = (day(d).evening || {}).mood;
-    svg += `<rect x="${w * (cell + gap)}" y="${r * (cell + gap)}" width="${cell}" height="${cell}" rx="2" fill="${m ? colors[m] : 'rgba(255,255,255,.06)'}"><title>${d}${m ? ' · mood ' + m : ''}</title></rect>`;
+  const lastSunday = addDays(end, -dow(end));
+  const s0 = addDays(lastSunday, -(weeks - 1) * 7);
+  const LBL = 14, TOP = 12; // room for day letters and month labels
+  const cell = Math.max(8, Math.min(16, Math.floor((340 - LBL) / weeks) - 2)), gap = 2;
+  const W = LBL + weeks * (cell + gap), H = TOP + 7 * (cell + gap);
+  const colors = { 1: '#E5484D', 2: '#F08A3E', 3: '#F2C94C', 4: '#8BD17C', 5: '#2FB67C' };
+  const names = { 1: 'Low', 2: 'Down', 3: 'Okay', 4: 'Good', 5: 'Great' };
+  let svg = `<svg class="chart heat" viewBox="0 0 ${W} ${H}">`;
+  ['S', 'M', 'T', 'W', 'T', 'F', 'S'].forEach((l, r) => { if (r % 2) svg += `<text x="0" y="${TOP + r * (cell + gap) + cell - 2}" fill="#7D7487" font-size="8">${l}</text>`; });
+  let lastMonth = '';
+  for (let w = 0; w < weeks; w++) {
+    const first = addDays(s0, w * 7), mon = fmtDay(first, { month: 'short' });
+    if (mon !== lastMonth && w < weeks - 1) { svg += `<text x="${LBL + w * (cell + gap)}" y="8" fill="#7D7487" font-size="8">${mon}</text>`; lastMonth = mon; }
+    for (let r = 0; r < 7; r++) {
+      const d = addDays(s0, w * 7 + r);
+      if (d > end) continue;
+      const m = (day(d).evening || {}).mood;
+      const x = LBL + w * (cell + gap), y = TOP + r * (cell + gap);
+      const label = `${fmtDay(d, { weekday: 'short', day: 'numeric', month: 'short' })} · ${m ? `mood ${m} (${names[m]})` : 'no evening check-in'}`;
+      svg += `<rect data-action="heatcell" data-label="${esc(label)}" x="${x}" y="${y}" width="${cell}" height="${cell}" rx="2.5" fill="${m ? colors[m] : 'rgba(255,255,255,.07)'}"${d === end ? ' stroke="#fff" stroke-width="1.5"' : ''}><title>${esc(label)}</title></rect>`;
+    }
   }
-  cols.push(svg + '</svg>');
-  return cols.join('') + legend([[colors[1], '1'], [colors[2], '2'], [colors[3], '3'], [colors[4], '4'], [colors[5], '5 mood'], ['rgba(255,255,255,.12)', 'no entry']]);
+  svg += '</svg>';
+  return svg + legend([1, 2, 3, 4, 5].map((k) => [colors[k], `${k} ${names[k]}`]).concat([['rgba(255,255,255,.14)', 'not logged']])) + `<p class="tiny" style="margin-top:6px">Today is outlined. Tap a square to see the day.</p>`;
 }
 function links() {
   const out = [];
@@ -1042,6 +1053,7 @@ document.addEventListener('click', async (ev) => {
     el.parentElement.querySelectorAll('button').forEach((b) => b.classList.remove('on')); el.classList.add('on');
   } else if (a === 'save') saveForm();
   else if (a === 'range') { S.range = Number(el.dataset.value); render(); }
+  else if (a === 'heatcell') { toast(el.dataset.label); }
   else if (a === 'speeddist') { S.speedDist = Number(el.dataset.value); render(); }
   else if (a === 'painpick') { S.painPick = el.dataset.value; render(); }
   else if (a === 'painbody') { bodyApi.focusStructure = el.dataset.value; S.tab = 'body'; render(); window.scrollTo(0, 0); }

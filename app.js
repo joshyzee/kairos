@@ -49,7 +49,7 @@ const NAPS = ['None', '20 min', '30 min', '45 min', '1h', '1h30', '2h+'];
 const SESSIONS = ['Rest', 'Speed', 'Speed endurance', 'Tempo', 'Race', 'Gym', 'Technogym cardio', 'Recovery', 'Other'];
 const TRAIN_TIMES = ['05:30', '06:00', '06:30', '07:00', '12:00', '14:00', '15:00', '15:30', '16:00', '16:30', '17:00', '17:30', '18:00', 'Not sure yet'];
 // A calendar event on that day that looks like training (Tuks athletics, gym, track).
-function trainingEvent(d) { return (typeof S !== 'undefined' && S.events ? eventsOn(d) : []).find((e) => !e.allDay && /train|athlet|track|tuks|gym|sprint|session|practice/i.test(e.title)); }
+function trainingEvent(d) { return (typeof S !== 'undefined' && S.events ? eventsOn(d) : []).find((e) => !e.allDay && (e.kind === 'training' || /train|practi[cs]e|athlet|track|sprint|gym/i.test(e.title))); }
 // What's planned for a day: the morning confirmation wins, then the evening-before plan, then the calendar.
 function planFor(d) {
   const m = day(d).morning, e = day(addDays(d, -1)).evening, ev = trainingEvent(d);
@@ -558,7 +558,7 @@ function evRow(e, timeOnly) {
   const d = e.start.slice(0, 10);
   const n = daysBetween(today(), d);
   const when = timeOnly ? (e.allDay ? 'All day' : e.start.slice(11, 16)) : (n === 1 ? 'Tomorrow' : n < 7 ? fmtDay(d, { weekday: 'short' }) : fmtDay(d, { day: 'numeric', month: 'short' }));
-  const label = { exam: 'Exam', test: 'Test', due: 'Due', class: 'Class', event: 'Event' }[e.kind] || 'Event';
+  const label = { exam: 'Exam', test: 'Test', due: 'Due', class: 'Class', event: 'Event', training: 'Training' }[e.kind] || 'Event';
   return `<div class="ev"><div class="when">${when}</div><div class="what">${esc(shortTitle(e.title))}${e.location && timeOnly ? `<div class="tiny">${esc(e.location)}</div>` : ''}</div><span class="tag ${e.kind}">${label}${!timeOnly && n > 1 && (e.kind === 'exam') ? ` · ${n}d` : ''}</span></div>`;
 }
 
